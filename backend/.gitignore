@@ -3,7 +3,7 @@
 
 # Dépendances
 node_modules/
-
+echo "node_modules/" >> .gitignore
 # Logs
 npm-debug.log*
 yarn-debug.log*
@@ -16,7 +16,7 @@ Thumbs.db
 # Fichiers de build
 /dist
 /build
-
+echo ".env" >> .gitignore
 # Fichiers de couverture de tests
 /coverage
 
