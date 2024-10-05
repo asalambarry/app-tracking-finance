@@ -1,5 +1,5 @@
 import express from 'express';
-import { addTransaction, deleteTransaction, getFilteredTransactions, getTransactionById, getTransactions, updateTransaction } from '../controllers/transactionController';
+import { addTransaction, deleteTransaction, getChartData, getDashboardData, getFilteredTransactions, getTransactionById, getTransactions, updateTransaction } from '../controllers/transactionController';
 
 const router = express.Router();
 
@@ -10,5 +10,8 @@ router.put('/:id', updateTransaction);
 router.delete('/:id', deleteTransaction);
 // Route pour filtrer les transactions
 router.get('/filtered', getFilteredTransactions);
+// Dashboard
+router.get('/dashboard', getDashboardData);
+router.get('/chart', getChartData);
 
 export default router;

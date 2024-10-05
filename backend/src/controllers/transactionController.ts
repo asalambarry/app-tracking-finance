@@ -128,4 +128,93 @@ export const getFilteredTransactions = async (req: Request, res: Response): Prom
     } catch (error) {
         res.status(500).json({ message: 'Erreur lors de la récupération des transactions filtrées', error });
     }
+}
+// Dashboard
+export const getDashboardData = async (req: Request, res: Response): Promise<void> => {
+    try {
+        // Calculer le total des revenus
+        const totalRevenues = await Transaction.aggregate([
+            { $match: { type: 'revenu' } },
+            { $group: { _id: null, total: { $sum: '$amount' } } }
+        ]);
+
+        // Calculer le total des dépenses
+        const totalDepenses = await Transaction.aggregate([
+            { $match: { type: 'dépense' } },
+            { $group: { _id: null, total: { $sum: '$amount' } } }
+        ]);
+
+        // Calculer le solde total
+        const revenu = totalRevenues[0]?.total || 0;
+        const depense = totalDepenses[0]?.total || 0;
+        const soldeTotal = revenu - depense;
+
+        // Préparer les données du tableau de bord
+        const dashboardData = {
+            revenuTotal: revenu,
+            depenseTotal: depense,
+            soldeTotal: soldeTotal,
+            estPositif: soldeTotal >= 0
+        };
+
+        res.status(200).json(dashboardData);
+    } catch (error) {
+        res.status(500).json({ message: 'Erreur lors de la récupération des données du tableau de bord', error });
+    }
+}
+
+export const getChartData = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { period } = req.query; // 'daily', 'weekly', ou 'monthly'
+        let groupBy: { $dateToString: { format: string; date: string } };
+        let sortBy: { [key: string]: number };
+
+        switch (period) {
+            case 'daily':
+                groupBy = { $dateToString: { format: "%Y-%m-%d", date: "$date" } };
+                sortBy = { "_id.date": 1 };
+                break;
+            case 'weekly':
+                groupBy = { $dateToString: { format: "%Y-W%V", date: "$date" } };
+                sortBy = { "_id.date": 1 };
+                break;
+            case 'monthly':
+            default:
+                groupBy = { $dateToString: { format: "%Y-%m", date: "$date" } };
+                sortBy = { "_id.date": 1 };
+                break;
+        }
+
+        const chartData = await Transaction.aggregate([
+            {
+                $group: {
+                    _id: {
+                        date: groupBy,
+                        type: "$type"
+                    },
+                    total: { $sum: "$amount" }
+                }
+            },
+            {
+                $group: {
+                    _id: "$_id.date",
+                    revenus: {
+                        $sum: {
+                            $cond: [{ $eq: ["$_id.type", "revenu"] }, "$total", 0]
+                        }
+                    },
+                    depenses: {
+                        $sum: {
+                            $cond: [{ $eq: ["$_id.type", "dépense"] }, "$total", 0]
+                        }
+                    }
+                }
+            },
+            { $sort: { _id: 1 } }
+        ]);
+
+        res.status(200).json(chartData);
+    } catch (error) {
+        res.status(500).json({ message: 'Erreur lors de la récupération des données du graphique', error });
+    }
 };
