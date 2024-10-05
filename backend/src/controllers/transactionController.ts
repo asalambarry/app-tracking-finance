@@ -30,6 +30,12 @@ export const addTransaction = async (req: AuthRequest, res: Response): Promise<v
             res.status(400).json({ message: 'Le type doit être "revenu" ou "dépense"' });
             return;
         }
+        const transactionDate = date ? new Date(date) : new Date();
+        if (isNaN(transactionDate.getTime())) {
+            res.status(400).json({ message: 'La date fournie n\'est pas valide' });
+            return;
+        }
+
 
         const newTransaction: ITransaction = new Transaction({
             title,
@@ -78,6 +84,44 @@ export const updateTransaction = async (req: AuthRequest, res: Response): Promis
         const { title, amount, type, date } = req.body;
         const userId = req.userId;
 
+        // Vérifier si la transaction existe et appartient à l'utilisateur
+        const existingTransaction = await Transaction.findOne({ _id: id, user: userId });
+        if (!existingTransaction) {
+            res.status(404).json({ message: 'Transaction non trouvée' });
+            return;
+        }
+        // Validation des données
+        if (title !== undefined && title.trim() === '') {
+            res.status(400).json({ message: 'Le titre ne peut pas être vide' });
+            return;
+        }
+
+        if (amount !== undefined) {
+            if (isNaN(amount) || amount <= 0) {
+                res.status(400).json({ message: 'Le montant doit être un nombre positif' });
+                return;
+            }
+        }
+        if (type !== undefined) {
+            if (type !== 'revenu' && type !== 'dépense') {
+                res.status(400).json({ message: 'Le type doit être "revenu" ou "dépense"' });
+                return;
+            }
+
+            if (type === 'revenu' && amount !== undefined && amount < 0) {
+                res.status(400).json({ message: 'Le montant d\'un revenu ne peut pas être négatif' });
+                return;
+            }
+        }
+        if (date !== undefined) {
+            const transactionDate = new Date(date);
+            if (isNaN(transactionDate.getTime())) {
+                res.status(400).json({ message: 'La date fournie n\'est pas valide' });
+                return;
+            }
+        }
+
+
         const updatedTransaction = await Transaction.findOneAndUpdate(
             { _id: id, user: userId },
             { title, amount, type, date },
@@ -99,6 +143,18 @@ export const deleteTransaction = async (req: AuthRequest, res: Response): Promis
     try {
         const { id } = req.params;
         const userId = req.userId;
+        if (!id) {
+            res.status(400).json({ message: 'ID de transaction non fourni' });
+            return;
+        }
+        // Vérifier si la transaction existe et appartient à l'utilisateur
+        const transaction = await Transaction.findOne({ _id: id, user: userId });
+
+        if (!transaction) {
+            res.status(404).json({ message: 'Transaction non trouvée ou non autorisée' });
+            return;
+        }
+
 
         const deletedTransaction = await Transaction.findOneAndDelete({ _id: id, user: userId });
 
