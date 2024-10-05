@@ -1,0 +1,27 @@
+# Fichiers d'environnement
+.env
+
+# Dépendances
+node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Fichiers de système d'exploitation
+.DS_Store
+Thumbs.db
+
+# Fichiers de build
+/dist
+/build
+
+# Fichiers de couverture de tests
+/coverage
+
+# Fichiers d'IDE et d'éditeurs
+/.idea
+/.vscode
+*.swp
+*.swo
