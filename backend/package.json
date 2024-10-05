@@ -1,0 +1,25 @@
+{
+    "type": "module",
+    "name": "backend",
+    "version": "1.0.0",
+    "description": "Backend for the application",
+    "main": "src/server.ts",
+    "scripts": {
+        "dev": "node --import 'data:text/javascript,import { register } from \"node:module\"; import { pathToFileURL } from \"node:url\"; register(\"ts-node/esm\", pathToFileURL(\"./\"));' --watch src/server.ts"
+    },
+    "dependencies": {
+        "@types/express": "^5.0.0",
+        "@types/node": "^22.7.4",
+        "dotenv": "^16.4.5",
+        "express": "^4.21.0",
+        "mongodb": "^6.9.0",
+        "mongoose": "^8.7.0",
+        "typescript": "^5.6.2"
+    },
+    "devDependencies": {
+        "@types/dotenv": "^8.2.0",
+        "@types/mongodb": "^4.0.7",
+        "@types/mongoose": "^5.11.97",
+        "ts-node": "^10.9.2"
+    }
+}
