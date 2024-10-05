@@ -1,12 +1,22 @@
 import { Request, Response } from 'express';
 import Transaction, { ITransaction } from '../models/Transaction';
+import PDFDocument from 'pdfkit';
+import { createObjectCsvWriter } from 'csv-writer';
+import fs from 'fs';
+import path from 'path';
 
-export const addTransaction = async (req: Request, res: Response): Promise<void> => {
+// Définition d'une interface étendue pour inclure userId
+interface AuthRequest extends Request {
+    userId?: string;
+}
+
+export const addTransaction = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
         const { title, amount, type, date } = req.body;
+        const userId = req.userId; // Obtenu du middleware d'authentification
 
         // Validation des données
-        if (!title || !amount || !type) {
+        if (!title || !amount || !type || !userId) {
             res.status(400).json({ message: 'Tous les champs sont requis' });
             return;
         }
@@ -25,7 +35,8 @@ export const addTransaction = async (req: Request, res: Response): Promise<void>
             title,
             amount,
             type,
-            date: date || new Date()
+            date: date || new Date(),
+            user: userId
         });
 
         await newTransaction.save();
@@ -36,19 +47,21 @@ export const addTransaction = async (req: Request, res: Response): Promise<void>
     }
 };
 
-export const getTransactions = async (req: Request, res: Response): Promise<void> => {
+export const getTransactions = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-        const transactions = await Transaction.find().sort({ date: -1 });
+        const userId = req.userId;
+        const transactions = await Transaction.find({ user: userId }).sort({ date: -1 });
         res.status(200).json(transactions);
     } catch (error) {
         res.status(500).json({ message: 'Erreur lors de la récupération des transactions', error });
     }
 };
 
-export const getTransactionById = async (req: Request, res: Response): Promise<void> => {
+export const getTransactionById = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
         const { id } = req.params;
-        const transaction = await Transaction.findById(id);
+        const userId = req.userId;
+        const transaction = await Transaction.findOne({ _id: id, user: userId });
         if (!transaction) {
             res.status(404).json({ message: 'Transaction non trouvée' });
             return;
@@ -59,13 +72,14 @@ export const getTransactionById = async (req: Request, res: Response): Promise<v
     }
 };
 
-export const updateTransaction = async (req: Request, res: Response): Promise<void> => {
+export const updateTransaction = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
         const { id } = req.params;
         const { title, amount, type, date } = req.body;
+        const userId = req.userId;
 
-        const updatedTransaction = await Transaction.findByIdAndUpdate(
-            id,
+        const updatedTransaction = await Transaction.findOneAndUpdate(
+            { _id: id, user: userId },
             { title, amount, type, date },
             { new: true, runValidators: true }
         );
@@ -81,11 +95,12 @@ export const updateTransaction = async (req: Request, res: Response): Promise<vo
     }
 };
 
-export const deleteTransaction = async (req: Request, res: Response): Promise<void> => {
+export const deleteTransaction = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
         const { id } = req.params;
+        const userId = req.userId;
 
-        const deletedTransaction = await Transaction.findByIdAndDelete(id);
+        const deletedTransaction = await Transaction.findOneAndDelete({ _id: id, user: userId });
 
         if (!deletedTransaction) {
             res.status(404).json({ message: 'Transaction non trouvée' });
@@ -98,11 +113,12 @@ export const deleteTransaction = async (req: Request, res: Response): Promise<vo
     }
 };
 
-export const getFilteredTransactions = async (req: Request, res: Response): Promise<void> => {
+export const getFilteredTransactions = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
         const { type, startDate, endDate, searchTerm } = req.query;
+        const userId = req.userId;
 
-        let query: any = {};
+        let query: any = { user: userId };
 
         // Filtre par type
         if (type && (type === 'revenu' || type === 'dépense')) {
@@ -129,18 +145,21 @@ export const getFilteredTransactions = async (req: Request, res: Response): Prom
         res.status(500).json({ message: 'Erreur lors de la récupération des transactions filtrées', error });
     }
 }
+
 // Dashboard
-export const getDashboardData = async (req: Request, res: Response): Promise<void> => {
+export const getDashboardData = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
+        const userId = req.userId;
+
         // Calculer le total des revenus
         const totalRevenues = await Transaction.aggregate([
-            { $match: { type: 'revenu' } },
+            { $match: { type: 'revenu', user: userId } },
             { $group: { _id: null, total: { $sum: '$amount' } } }
         ]);
 
         // Calculer le total des dépenses
         const totalDepenses = await Transaction.aggregate([
-            { $match: { type: 'dépense' } },
+            { $match: { type: 'dépense', user: userId } },
             { $group: { _id: null, total: { $sum: '$amount' } } }
         ]);
 
@@ -163,9 +182,10 @@ export const getDashboardData = async (req: Request, res: Response): Promise<voi
     }
 }
 
-export const getChartData = async (req: Request, res: Response): Promise<void> => {
+export const getChartData = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
         const { period } = req.query; // 'daily', 'weekly', ou 'monthly'
+        const userId = req.userId;
         let groupBy: { $dateToString: { format: string; date: string } };
         let sortBy: { [key: string]: number };
 
@@ -186,6 +206,7 @@ export const getChartData = async (req: Request, res: Response): Promise<void> =
         }
 
         const chartData = await Transaction.aggregate([
+            { $match: { user: userId } },
             {
                 $group: {
                     _id: {
@@ -218,3 +239,138 @@ export const getChartData = async (req: Request, res: Response): Promise<void> =
         res.status(500).json({ message: 'Erreur lors de la récupération des données du graphique', error });
     }
 };
+
+// Rapport financier
+export const generateFinancialReport = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+        const { startDate, endDate } = req.query;
+        const userId = req.userId;
+
+        if (!startDate || !endDate) {
+            res.status(400).json({ message: 'Les dates de début et de fin sont requises' });
+            return;
+        }
+
+        const start = new Date(startDate as string);
+        const end = new Date(endDate as string);
+
+        // Récupérer les transactions pour la période donnée
+        const transactions = await Transaction.find({
+            user: userId,
+            date: { $gte: start, $lte: end }
+        }).sort({ date: 1 });
+
+        // Calculer les totaux
+        const totalRevenues = transactions
+            .filter(t => t.type === 'revenu')
+            .reduce((sum, t) => sum + t.amount, 0);
+
+        const totalDepenses = transactions
+            .filter(t => t.type === 'dépense')
+            .reduce((sum, t) => sum + t.amount, 0);
+
+        const soldeFinal = totalRevenues - totalDepenses;
+
+        // Générer le rapport
+        const report = {
+            periode: {
+                debut: start,
+                fin: end
+            },
+            transactions: transactions,
+            totalRevenues: totalRevenues,
+            totalDepenses: totalDepenses,
+            soldeFinal: soldeFinal
+        };
+
+        res.status(200).json(report);
+    } catch (error) {
+        res.status(500).json({ message: 'Erreur lors de la génération du rapport financier', error });
+    }
+};
+
+export const exportFinancialReport = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+        const { startDate, endDate, format } = req.query;
+        const userId = req.userId;
+
+        if (!startDate || !endDate || !format) {
+            res.status(400).json({ message: 'Les dates de début et de fin, ainsi que le format sont requis' });
+            return;
+        }
+
+        const start = new Date(startDate as string);
+        const end = new Date(endDate as string);
+
+        const transactions = await Transaction.find({
+            user: userId,
+            date: { $gte: start, $lte: end }
+        }).sort({ date: 1 });
+
+        const totalRevenues = transactions
+            .filter(t => t.type === 'revenu')
+            .reduce((sum, t) => sum + t.amount, 0);
+
+        const totalDepenses = transactions
+            .filter(t => t.type === 'dépense')
+            .reduce((sum, t) => sum + t.amount, 0);
+
+        const soldeFinal = totalRevenues - totalDepenses;
+
+        if (format === 'pdf') {
+            await exportToPDF(res, start, end, transactions, totalRevenues, totalDepenses, soldeFinal);
+        } else if (format === 'csv') {
+            await exportToCSV(res, start, end, transactions, totalRevenues, totalDepenses, soldeFinal);
+        } else {
+            res.status(400).json({ message: 'Format non supporté. Utilisez "pdf" ou "csv".' });
+        }
+    } catch (error) {
+        res.status(500).json({ message: 'Erreur lors de l\'exportation du rapport financier', error });
+    }
+};
+async function exportToPDF(res: Response, start: Date, end: Date, transactions: any[], totalRevenues: number, totalDepenses: number, soldeFinal: number) {
+    const doc = new PDFDocument();
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=rapport_financier_${start.toISOString().split('T')[0]}_${end.toISOString().split('T')[0]}.pdf`);
+
+    doc.pipe(res);
+
+    doc.fontSize(18).text('Rapport Financier', { align: 'center' });
+    doc.moveDown();
+    doc.fontSize(12).text(`Période: ${start.toLocaleDateString()} - ${end.toLocaleDateString()}`);
+    doc.moveDown();
+    doc.text(`Total des revenus: ${totalRevenues} €`);
+    doc.text(`Total des dépenses: ${totalDepenses} €`);
+    doc.text(`Solde final: ${soldeFinal} €`);
+    doc.moveDown();
+
+    doc.text('Transactions:', { underline: true });
+    transactions.forEach((t, index) => {
+        doc.text(`${index + 1}. ${t.title} - ${t.amount} € (${t.type}) - ${new Date(t.date).toLocaleDateString()}`);
+    });
+
+    doc.end();
+}
+
+async function exportToCSV(res: Response, start: Date, end: Date, transactions: any[], totalRevenues: number, totalDepenses: number, soldeFinal: number) {
+    const csvWriter = createObjectCsvWriter({
+        path: path.resolve(__dirname, '../../temp/rapport_financier.csv'),
+        header: [
+            { id: 'title', title: 'Titre' },
+            { id: 'amount', title: 'Montant' },
+            { id: 'type', title: 'Type' },
+            { id: 'date', title: 'Date' }
+        ]
+    });
+
+    await csvWriter.writeRecords(transactions.map(t => ({
+        ...t,
+        date: new Date(t.date).toLocaleDateString()
+    })));
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=rapport_financier_${start.toISOString().split('T')[0]}_${end.toISOString().split('T')[0]}.csv`);
+
+    const fileStream = fs.createReadStream(path.resolve(__dirname, '../../temp/rapport_financier.csv'));
+    fileStream.pipe(res);
+}

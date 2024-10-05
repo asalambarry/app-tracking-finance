@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 import express from 'express';
 import connectDB from './config/db';
 import transactionRoutes from './routes/transactionRoutes';
-
+import userRoutes from './routes/userRoute';
 dotenv.config();
 
 const app = express();
@@ -13,7 +13,10 @@ connectDB();
 
 app.use(express.json());
 // Routes
+
 app.use('/api/transactions', transactionRoutes);
+// Commentez ou supprimez la ligne suivante si userRoutes n'est pas défini
+app.use('/api/users', userRoutes);
 
 app.get('/', (req, res) => {
   res.send('Bonjour, monde!');
