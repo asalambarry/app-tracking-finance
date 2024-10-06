@@ -1,25 +1,48 @@
+
 import dotenv from 'dotenv';
-import express from 'express';
+import express, { Express } from 'express';
 import connectDB from './config/db';
+import categoryRoutes from './routes/categoryRoutes';
+import dashboardRoutes from './routes/dashRoutes';
 import transactionRoutes from './routes/transactionRoutes';
 import userRoutes from './routes/userRoute';
+
+// Chargement des variables d'environnement
 dotenv.config();
 
-const app = express();
-const port = process.env.PORT || 5002;
+// Initialisation de l'application Express
+const app: Express = express();
+const port: number = parseInt(process.env.PORT || '5002', 10);
+
+// Middleware
+app.use(express.json());
 
 // Connexion à MongoDB
 connectDB();
 
-app.use(express.json());
-// Routes
+// Définition des routes
+const defineRoutes = (): void => {
+  app.use('/api/transactions', transactionRoutes);
+  app.use('/api/users', userRoutes);
+  app.use('/api/categories', categoryRoutes);
+  app.use('/api/dashboard', dashboardRoutes);
 
-app.use('/api/transactions', transactionRoutes);
-// Commentez ou supprimez la ligne suivante si userRoutes n'est pas défini
-app.use('/api/users', userRoutes);
+  // Route de base
+  app.get('/', (req, res) => {
+    res.send('Bienvenue sur l\'API de gestion financière!');
+  });
+};
 
-app.get('/', (req, res) => {
-  res.send('Bonjour, monde!');
-});
+// Application des routes
+defineRoutes();
 
-app.listen(port, () => console.log(`Serveur en cours d'exécution sur le port ${port}`));
+// Démarrage du serveur
+const startServer = (): void => {
+  app.listen(port, () => {
+    console.log(`Serveur en cours d'exécution sur le port ${port}`);
+  });
+};
+
+startServer();
+
+export default app;

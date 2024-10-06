@@ -1,9 +1,10 @@
-import { Request, Response } from 'express';
-import Transaction, { ITransaction } from '../models/Transaction';
-import PDFDocument from 'pdfkit';
 import { createObjectCsvWriter } from 'csv-writer';
+import { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
+import PDFDocument from 'pdfkit';
+import Category from '../models/Category';
+import Transaction, { ITransaction } from '../models/Transaction';
 
 // Définition d'une interface étendue pour inclure userId
 interface AuthRequest extends Request {
@@ -12,7 +13,7 @@ interface AuthRequest extends Request {
 
 export const addTransaction = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-        const { title, amount, type, date } = req.body;
+        const { title, amount, type,category, date } = req.body;
         const userId = req.userId; // Obtenu du middleware d'authentification
 
         // Validation des données
@@ -35,12 +36,18 @@ export const addTransaction = async (req: AuthRequest, res: Response): Promise<v
             res.status(400).json({ message: 'La date fournie n\'est pas valide' });
             return;
         }
-
+// Vérifier si la catégorie existe pour cet utilisateur
+const existingCategory = await Category.findOne({ name: category, user: userId });
+if (!existingCategory) {
+    res.status(400).json({ message: 'Catégorie non valide' });
+    return;
+}
 
         const newTransaction: ITransaction = new Transaction({
             title,
             amount,
             type,
+            category,
             date: date || new Date(),
             user: userId
         });
@@ -56,10 +63,13 @@ export const addTransaction = async (req: AuthRequest, res: Response): Promise<v
 export const getTransactions = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
         const userId = req.userId;
-        const transactions = await Transaction.find({ user: userId }).sort({ date: -1 });
+        const transactions = await Transaction.find({ user: userId })
+            .populate('category', 'name') // Ceci suppose que vous avez une référence à la catégorie dans le modèle Transaction
+            .sort({ date: -1 });
         res.status(200).json(transactions);
     } catch (error) {
-        res.status(500).json({ message: 'Erreur lors de la récupération des transactions', error });
+        console.error('Erreur lors de la récupération des transactions:', error);
+        res.status(500).json({ message: 'Erreur lors de la récupération des transactions' });
     }
 };
 
@@ -67,21 +77,22 @@ export const getTransactionById = async (req: AuthRequest, res: Response): Promi
     try {
         const { id } = req.params;
         const userId = req.userId;
-        const transaction = await Transaction.findOne({ _id: id, user: userId });
+        const transaction = await Transaction.findOne({ _id: id, user: userId })
+            .populate('category', 'name');
         if (!transaction) {
             res.status(404).json({ message: 'Transaction non trouvée' });
             return;
         }
         res.status(200).json(transaction);
     } catch (error) {
-        res.status(500).json({ message: 'Erreur lors de la récupération de la transaction', error });
+        console.error('Erreur lors de la récupération de la transaction:', error);
+        res.status(500).json({ message: 'Erreur lors de la récupération de la transaction' });
     }
 };
-
 export const updateTransaction = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
         const { id } = req.params;
-        const { title, amount, type, date } = req.body;
+        const { title, amount, type, category, date } = req.body;
         const userId = req.userId;
 
         // Vérifier si la transaction existe et appartient à l'utilisateur
@@ -120,13 +131,21 @@ export const updateTransaction = async (req: AuthRequest, res: Response): Promis
                 return;
             }
         }
+         // Vérifier si la catégorie existe pour cet utilisateur
+         if (category) {
+            const existingCategory = await Category.findOne({ name: category, user: userId });
+            if (!existingCategory) {
+                res.status(400).json({ message: 'Catégorie non valide' });
+                return;
+            }
+        }
 
 
         const updatedTransaction = await Transaction.findOneAndUpdate(
             { _id: id, user: userId },
-            { title, amount, type, date },
+            { title, amount, type, category, date },
             { new: true, runValidators: true }
-        );
+        ).populate('category', 'name');
 
         if (!updatedTransaction) {
             res.status(404).json({ message: 'Transaction non trouvée' });
@@ -168,10 +187,9 @@ export const deleteTransaction = async (req: AuthRequest, res: Response): Promis
         res.status(500).json({ message: 'Erreur lors de la suppression de la transaction', error });
     }
 };
-
 export const getFilteredTransactions = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-        const { type, startDate, endDate, searchTerm } = req.query;
+        const { type, startDate, endDate, searchTerm, category } = req.query;
         const userId = req.userId;
 
         let query: any = { user: userId };
@@ -194,109 +212,22 @@ export const getFilteredTransactions = async (req: AuthRequest, res: Response): 
             query.title = { $regex: searchTerm, $options: 'i' };
         }
 
-        const transactions = await Transaction.find(query).sort({ date: -1 });
+        // Filtre par catégorie
+        if (category) {
+            query.category = category;
+        }
+
+        const transactions = await Transaction.find(query)
+            .populate('category', 'name')
+            .sort({ date: -1 });
 
         res.status(200).json(transactions);
     } catch (error) {
-        res.status(500).json({ message: 'Erreur lors de la récupération des transactions filtrées', error });
+        console.error('Erreur lors de la récupération des transactions filtrées:', error);
+        res.status(500).json({ message: 'Erreur lors de la récupération des transactions filtrées' });
     }
 }
 
-// Dashboard
-export const getDashboardData = async (req: AuthRequest, res: Response): Promise<void> => {
-    try {
-        const userId = req.userId;
-
-        // Calculer le total des revenus
-        const totalRevenues = await Transaction.aggregate([
-            { $match: { type: 'revenu', user: userId } },
-            { $group: { _id: null, total: { $sum: '$amount' } } }
-        ]);
-
-        // Calculer le total des dépenses
-        const totalDepenses = await Transaction.aggregate([
-            { $match: { type: 'dépense', user: userId } },
-            { $group: { _id: null, total: { $sum: '$amount' } } }
-        ]);
-
-        // Calculer le solde total
-        const revenu = totalRevenues[0]?.total || 0;
-        const depense = totalDepenses[0]?.total || 0;
-        const soldeTotal = revenu - depense;
-
-        // Préparer les données du tableau de bord
-        const dashboardData = {
-            revenuTotal: revenu,
-            depenseTotal: depense,
-            soldeTotal: soldeTotal,
-            estPositif: soldeTotal >= 0
-        };
-
-        res.status(200).json(dashboardData);
-    } catch (error) {
-        res.status(500).json({ message: 'Erreur lors de la récupération des données du tableau de bord', error });
-    }
-}
-
-export const getChartData = async (req: AuthRequest, res: Response): Promise<void> => {
-    try {
-        const { period } = req.query; // 'daily', 'weekly', ou 'monthly'
-        const userId = req.userId;
-        let groupBy: { $dateToString: { format: string; date: string } };
-        let sortBy: { [key: string]: number };
-
-        switch (period) {
-            case 'daily':
-                groupBy = { $dateToString: { format: "%Y-%m-%d", date: "$date" } };
-                sortBy = { "_id.date": 1 };
-                break;
-            case 'weekly':
-                groupBy = { $dateToString: { format: "%Y-W%V", date: "$date" } };
-                sortBy = { "_id.date": 1 };
-                break;
-            case 'monthly':
-            default:
-                groupBy = { $dateToString: { format: "%Y-%m", date: "$date" } };
-                sortBy = { "_id.date": 1 };
-                break;
-        }
-
-        const chartData = await Transaction.aggregate([
-            { $match: { user: userId } },
-            {
-                $group: {
-                    _id: {
-                        date: groupBy,
-                        type: "$type"
-                    },
-                    total: { $sum: "$amount" }
-                }
-            },
-            {
-                $group: {
-                    _id: "$_id.date",
-                    revenus: {
-                        $sum: {
-                            $cond: [{ $eq: ["$_id.type", "revenu"] }, "$total", 0]
-                        }
-                    },
-                    depenses: {
-                        $sum: {
-                            $cond: [{ $eq: ["$_id.type", "dépense"] }, "$total", 0]
-                        }
-                    }
-                }
-            },
-            { $sort: { _id: 1 } }
-        ]);
-
-        res.status(200).json(chartData);
-    } catch (error) {
-        res.status(500).json({ message: 'Erreur lors de la récupération des données du graphique', error });
-    }
-};
-
-// Rapport financier
 export const generateFinancialReport = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
         const { startDate, endDate } = req.query;
@@ -310,41 +241,63 @@ export const generateFinancialReport = async (req: AuthRequest, res: Response): 
         const start = new Date(startDate as string);
         const end = new Date(endDate as string);
 
-        // Récupérer les transactions pour la période donnée
-        const transactions = await Transaction.find({
-            user: userId,
-            date: { $gte: start, $lte: end }
-        }).sort({ date: 1 });
+        // Récupérer les transactions pour la période donnée, groupées par catégorie
+        const transactionsByCategory = await Transaction.aggregate([
+            {
+                $match: {
+                    user: userId,
+                    date: { $gte: start, $lte: end }
+                }
+            },
+            {
+                $group: {
+                    _id: { type: '$type', category: '$category' },
+                    total: { $sum: '$amount' },
+                    transactions: { $push: '$$ROOT' }
+                }
+            },
+            {
+                $group: {
+                    _id: '$_id.type',
+                    categories: {
+                        $push: {
+                            category: '$_id.category',
+                            total: '$total',
+                            transactions: '$transactions'
+                        }
+                    },
+                    total: { $sum: '$total' }
+                }
+            }
+        ]);
 
-        // Calculer les totaux
-        const totalRevenues = transactions
-            .filter(t => t.type === 'revenu')
-            .reduce((sum, t) => sum + t.amount, 0);
-
-        const totalDepenses = transactions
-            .filter(t => t.type === 'dépense')
-            .reduce((sum, t) => sum + t.amount, 0);
-
-        const soldeFinal = totalRevenues - totalDepenses;
-
-        // Générer le rapport
+        // Préparer le rapport
         const report = {
             periode: {
                 debut: start,
                 fin: end
             },
-            transactions: transactions,
-            totalRevenues: totalRevenues,
-            totalDepenses: totalDepenses,
-            soldeFinal: soldeFinal
+            revenus: { total: 0, categories: [] },
+            depenses: { total: 0, categories: [] },
+            soldeFinal: 0
         };
+
+        transactionsByCategory.forEach(item => {
+            if (item._id === 'revenu') {
+                report.revenus = item;
+            } else if (item._id === 'dépense') {
+                report.depenses = item;
+            }
+        });
+
+        report.soldeFinal = report.revenus.total - report.depenses.total;
 
         res.status(200).json(report);
     } catch (error) {
-        res.status(500).json({ message: 'Erreur lors de la génération du rapport financier', error });
+        console.error('Erreur lors de la génération du rapport financier:', error);
+        res.status(500).json({ message: 'Erreur lors de la génération du rapport financier' });
     }
 };
-
 export const exportFinancialReport = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
         const { startDate, endDate, format } = req.query;
@@ -415,12 +368,14 @@ async function exportToCSV(res: Response, start: Date, end: Date, transactions: 
             { id: 'title', title: 'Titre' },
             { id: 'amount', title: 'Montant' },
             { id: 'type', title: 'Type' },
+            { id: 'category', title: 'Catégorie' },
             { id: 'date', title: 'Date' }
         ]
     });
 
     await csvWriter.writeRecords(transactions.map(t => ({
         ...t,
+        category: t.category.name, // Supposant que la catégorie a été peuplée
         date: new Date(t.date).toLocaleDateString()
     })));
 
